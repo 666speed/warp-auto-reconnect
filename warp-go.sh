@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 # 当前脚本版本号和新增功能
-VERSION='1.3.3'
+VERSION='1.3.4'
 
 # 环境变量用于在Debian或Ubuntu操作系统中设置非交互式（noninteractive）安装模式
 export DEBIAN_FRONTEND=noninteractive
@@ -13,8 +13,8 @@ trap cleanup_resources EXIT INT TERM
 
 E[0]="Language:\n  1.English (default) \n  2.简体中文"
 C[0]="${E[0]}"
-E[1]="Add WARP health monitor with automatic reconnect"
-C[1]="新增 WARP 健康检测与自动重连"
+E[1]="Stabilize WARP health monitor automatic reconnect"
+C[1]="优化 WARP 健康检测自动重连稳定性"
 E[2]="warp-go h (help)\n warp-go o (temporary warp-go switch)\n warp-go u (uninstall WARP web interface and warp-go)\n warp-go v (sync script to latest version)\n warp-go i (replace IP with Netflix support)\n warp-go 4/6 ( WARP IPv4/IPv6 single-stack)\n warp-go d (WARP dual-stack)\n warp-go n (WARP IPv4 non-global)\n warp-go g (WARP global/non-global switching)\n warp-go e (output wireguard and sing-box configuration file)\n warp-go s 4/6/d (Set stack proiority: IPv4 / IPv6 / VPS default)\n"
 C[2]="warp-go h (帮助）\n warp-go o (临时 warp-go 开关)\n warp-go u (卸载 WARP 网络接口和 warp-go)\n warp-go v (同步脚本至最新版本)\n warp-go i (更换支持 Netflix 的IP)\n warp-go 4/6 (WARP IPv4/IPv6 单栈)\n warp-go d (WARP 双栈)\n warp-go n (WARP IPv4 非全局)\n warp-go g (WARP 全局 / 非全局相互切换)\n warp-go e (输出 wireguard 和 sing-box 配置文件)\n warp-go s 4/6/d (优先级: IPv4 / IPv6 / VPS default)\n"
 E[3]="This project is designed to add WARP network interface for VPS, using warp-go core, using various interfaces of CloudFlare-WARP, integrated wireguard-go, can completely replace WGCF. Save Hong Kong, Toronto and other VPS, can also get WARP IP. Thanks again @CoiaPrant and his team. Project address: https://gitlab.com/ProjectWARP/warp-go/-/tree/master/"
@@ -659,12 +659,12 @@ CONF="/opt/warp-go/warp.conf"
 ENABLE_FILE="/opt/warp-go/monitor.enable"
 PAUSE_FILE="/opt/warp-go/monitor.pause"
 LOG_FILE="/opt/warp-go/monitor.log"
-INTERVAL="${WARP_GO_MONITOR_INTERVAL:-3}"
-TIMEOUT="${WARP_GO_MONITOR_TIMEOUT:-2}"
-FAIL_LIMIT="${WARP_GO_MONITOR_FAIL_LIMIT:-1}"
-BASE_COOLDOWN="${WARP_GO_MONITOR_COOLDOWN:-5}"
-MAX_COOLDOWN="${WARP_GO_MONITOR_MAX_COOLDOWN:-60}"
-START_GRACE="${WARP_GO_MONITOR_START_GRACE:-8}"
+INTERVAL="${WARP_GO_MONITOR_INTERVAL:-10}"
+TIMEOUT="${WARP_GO_MONITOR_TIMEOUT:-5}"
+FAIL_LIMIT="${WARP_GO_MONITOR_FAIL_LIMIT:-3}"
+BASE_COOLDOWN="${WARP_GO_MONITOR_COOLDOWN:-30}"
+MAX_COOLDOWN="${WARP_GO_MONITOR_MAX_COOLDOWN:-300}"
+START_GRACE="${WARP_GO_MONITOR_START_GRACE:-30}"
 
 log_msg() {
   [ -d /opt/warp-go ] || return 0
@@ -768,12 +768,12 @@ Documentation=https://github.com/fscarmen/warp-sh
 [Service]
 Type=simple
 WorkingDirectory=/opt/warp-go/
-Environment="WARP_GO_MONITOR_INTERVAL=3"
-Environment="WARP_GO_MONITOR_TIMEOUT=2"
-Environment="WARP_GO_MONITOR_FAIL_LIMIT=1"
-Environment="WARP_GO_MONITOR_COOLDOWN=5"
-Environment="WARP_GO_MONITOR_MAX_COOLDOWN=60"
-Environment="WARP_GO_MONITOR_START_GRACE=8"
+Environment="WARP_GO_MONITOR_INTERVAL=10"
+Environment="WARP_GO_MONITOR_TIMEOUT=5"
+Environment="WARP_GO_MONITOR_FAIL_LIMIT=3"
+Environment="WARP_GO_MONITOR_COOLDOWN=30"
+Environment="WARP_GO_MONITOR_MAX_COOLDOWN=300"
+Environment="WARP_GO_MONITOR_START_GRACE=30"
 ExecStart=/opt/warp-go/warp-go-monitor.sh
 Restart=always
 RestartSec=2s
