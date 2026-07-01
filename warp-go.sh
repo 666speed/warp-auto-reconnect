@@ -852,6 +852,8 @@ ver() {
     mv /tmp/warp-go.sh /opt/warp-go/
     chmod +x /opt/warp-go/warp-go.sh
     ln -sf /opt/warp-go/warp-go.sh /usr/bin/warp-go
+    [ -s /opt/warp-go/warp.conf ] && create_monitor
+    [ -e /opt/warp-go/monitor.enable ] && monitor_start
     info " $(text 18): $(grep ^VERSION /opt/warp-go/warp-go.sh | sed "s/.*=//g")  $(text 19): $(grep "${L}\[1\]" /opt/warp-go/warp-go.sh | cut -d \" -f2) "
   fi
   exit
@@ -1519,7 +1521,7 @@ case "$OPTION" in
     global_switch; exit 0
 esac
 
-[ "$STATUS" = 2 ] && [ ! -x /opt/warp-go/warp-go-monitor.sh ] && create_monitor
+[ "$STATUS" = 2 ] && create_monitor
 [ "$STATUS" = 2 ] && monitor_start
 
 # 主程序运行 3/3
