@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 # 当前脚本版本号和新增功能
-VERSION='1.3.5'
+VERSION='1.3.6'
 
 # 环境变量用于在Debian或Ubuntu操作系统中设置非交互式（noninteractive）安装模式
 export DEBIAN_FRONTEND=noninteractive
@@ -13,8 +13,8 @@ trap cleanup_resources EXIT INT TERM
 
 E[0]="Language:\n  1.English (default) \n  2.简体中文"
 C[0]="${E[0]}"
-E[1]="Add IPv4/IPv6 single-stack non-global WARP modes"
-C[1]="新增 IPv4/IPv6 单栈非全局 WARP 模式"
+E[1]="Fix single-stack non-global WARP detection"
+C[1]="修复单栈非全局 WARP 检测"
 E[2]="warp-go h (help)\n warp-go o (temporary warp-go switch)\n warp-go u (uninstall WARP web interface and warp-go)\n warp-go v (sync script to latest version)\n warp-go i (replace IP with Netflix support)\n warp-go 4/6 ( WARP IPv4/IPv6 single-stack)\n warp-go d (WARP dual-stack)\n warp-go n4/n6 (WARP IPv4/IPv6 single-stack non-global)\n warp-go n/nd (WARP dual-stack non-global)\n warp-go g (WARP global/non-global switching)\n warp-go e (output wireguard and sing-box configuration file)\n warp-go s 4/6/d (Set stack proiority: IPv4 / IPv6 / VPS default)\n"
 C[2]="warp-go h (帮助）\n warp-go o (临时 warp-go 开关)\n warp-go u (卸载 WARP 网络接口和 warp-go)\n warp-go v (同步脚本至最新版本)\n warp-go i (更换支持 Netflix 的IP)\n warp-go 4/6 (WARP IPv4/IPv6 单栈)\n warp-go d (WARP 双栈)\n warp-go n4/n6 (WARP IPv4/IPv6 单栈非全局)\n warp-go n/nd (WARP 双栈非全局)\n warp-go g (WARP 全局 / 非全局相互切换)\n warp-go e (输出 wireguard 和 sing-box 配置文件)\n warp-go s 4/6/d (优先级: IPv4 / IPv6 / VPS default)\n"
 E[3]="This project is designed to add WARP network interface for VPS, using warp-go core, using various interfaces of CloudFlare-WARP, integrated wireguard-go, can completely replace WGCF. Save Hong Kong, Toronto and other VPS, can also get WARP IP. Thanks again @CoiaPrant and his team. Project address: https://gitlab.com/ProjectWARP/warp-go/-/tree/master/"
@@ -483,6 +483,20 @@ ip6_info() {
   ASNORG6=$(awk -F '"' '/"isp"/{print $4}' <<< "$IP_JSON")
 }
 
+allowed_ips_has_v4() {
+  grep -qsE '^[#[:space:]]*AllowedIPs[[:space:]]*=.*0\.0\.0\.0/0' /opt/warp-go/warp.conf
+}
+
+allowed_ips_has_v6() {
+  grep -qsE '^[#[:space:]]*AllowedIPs[[:space:]]*=.*::/0' /opt/warp-go/warp.conf
+}
+
+set_warp_interfaces() {
+  unset INTERFACE_4 INTERFACE_6
+  allowed_ips_has_v4 && INTERFACE_4='--interface WARP'
+  allowed_ips_has_v6 && INTERFACE_6='--interface WARP'
+}
+
 # 帮助说明
 help() { hint " $(text 2) "; }
 
@@ -552,12 +566,8 @@ change_ip() {
 
   # 检测 WARP 单双栈服务
   unset T4 T6
-  if grep -q "#AllowedIPs" /opt/warp-go/warp.conf; then
-    T4=1; T6=1
-  else
-    grep -q "0\.\0\/0" 2>/dev/null /opt/warp-go/warp.conf && T4=1 || T4=0
-    grep -q "\:\:\/0" 2>/dev/null /opt/warp-go/warp.conf && T6=1 || T6=0
-  fi
+  allowed_ips_has_v4 && T4=1 || T4=0
+  allowed_ips_has_v6 && T6=1 || T6=0
   case "$T4$T6" in
     01 )
       NF='6'
@@ -823,6 +833,37 @@ monitor_resume() {
     rm -f /opt/warp-go/monitor.pause
   fi
 }
+
+create_non_global_scripts() {
+  mkdir -p /opt/warp-go/ >/dev/null 2>&1
+  cat > /opt/warp-go/NonGlobalUp.sh << 'EOF'
+#!/usr/bin/env bash
+sleep 5
+CONF=/opt/warp-go/warp.conf
+
+if grep -qsE '^[#[:space:]]*AllowedIPs[[:space:]]*=.*0\.0\.0\.0/0' "$CONF"; then
+  ip -4 rule add oif WARP lookup 60000 2>/dev/null
+  ip -4 rule add table main suppress_prefixlength 0 2>/dev/null
+  ip -4 route add default dev WARP table 60000 2>/dev/null
+fi
+
+if grep -qsE '^[#[:space:]]*AllowedIPs[[:space:]]*=.*::/0' "$CONF"; then
+  ip -6 rule add oif WARP lookup 60000 2>/dev/null
+  ip -6 rule add table main suppress_prefixlength 0 2>/dev/null
+  ip -6 route add default dev WARP table 60000 2>/dev/null
+fi
+EOF
+
+  cat > /opt/warp-go/NonGlobalDown.sh << 'EOF'
+#!/usr/bin/env bash
+ip -4 rule delete oif WARP lookup 60000 2>/dev/null
+ip -4 rule delete table main suppress_prefixlength 0 2>/dev/null
+ip -6 rule delete oif WARP lookup 60000 2>/dev/null
+ip -6 rule delete table main suppress_prefixlength 0 2>/dev/null
+EOF
+
+  chmod +x /opt/warp-go/NonGlobalUp.sh /opt/warp-go/NonGlobalDown.sh
+}
 # <<< CUSTOM WARP-GO HEALTH MONITOR
 
 # 关闭 WARP 网络接口，并删除 warp-go
@@ -861,6 +902,8 @@ ver() {
     chmod +x /opt/warp-go/warp-go.sh
     ln -sf /opt/warp-go/warp-go.sh /usr/bin/warp-go
     [ -s /opt/warp-go/warp.conf ] && create_monitor
+    [ -s /opt/warp-go/warp.conf ] && create_non_global_scripts
+    [ -s /opt/warp-go/warp.conf ] && grep -q '#AllowedIPs' /opt/warp-go/warp.conf && ${SYSTEMCTL_RESTART[int]} >/dev/null 2>&1
     [ -e /opt/warp-go/monitor.enable ] && monitor_start
     info " $(text 18): $(grep ^VERSION /opt/warp-go/warp-go.sh | sed "s/.*=//g")  $(text 19): $(grep "${L}\[1\]" /opt/warp-go/warp-go.sh | cut -d \" -f2) "
   fi
@@ -871,18 +914,19 @@ ver() {
 net() {
   unset IP4 IP6 WAN4 WAN6 COUNTRY4 COUNTRY6 ASNORG4 ASNORG6
   i=1; j=5
-  grep -qE "^AllowedIPs[ ]+=.*0\.\0\/0|#AllowedIPs" 2>/dev/null /opt/warp-go/warp.conf && INTERFACE_4='--interface WARP'
-  grep -qE "^AllowedIPs[ ]+=.*\:\:\/0|#AllowedIPs" 2>/dev/null /opt/warp-go/warp.conf && INTERFACE_6='--interface WARP'
+  set_warp_interfaces
   hint " $(text_eval 20)\n $(text_eval 59) "
   [ "$KEEP_FREE" != 1 ] && ${SYSTEMCTL_RESTART[int]}
   grep -q "#AllowedIPs" /opt/warp-go/warp.conf && sleep 8 || sleep 1
-  ip4_info; ip6_info
+  [ -n "$INTERFACE_4" ] && ip4_info || unset TRACE4 WAN4 COUNTRY4 ASNORG4
+  [ -n "$INTERFACE_6" ] && ip6_info || unset TRACE6 WAN6 COUNTRY6 ASNORG6
   until [[ "$TRACE4$TRACE6" =~ on|plus ]]; do
     (( i++ )) || true
     hint " $(text_eval 59) "
     ${SYSTEMCTL_RESTART[int]}
     grep -q "#AllowedIPs" /opt/warp-go/warp.conf && sleep 8 || sleep 1
-    ip4_info; ip6_info
+    [ -n "$INTERFACE_4" ] && ip4_info || unset TRACE4 WAN4 COUNTRY4 ASNORG4
+    [ -n "$INTERFACE_6" ] && ip6_info || unset TRACE6 WAN6 COUNTRY6 ASNORG6
       if [[ "$i" = "$j" ]]; then
         if [ -s /opt/warp-go/warp.conf.tmp1 ]; then
           i=0 && info " $(text 22) " &&
@@ -970,12 +1014,8 @@ onoff() {
 # 检查系统 WARP 单双栈情况。为了速度，先检查 warp-go 配置文件里的情况，再判断 trace
 check_stack() {
   if [ -s /opt/warp-go/warp.conf ]; then
-    if grep -q "^#AllowedIPs" /opt/warp-go/warp.conf; then
-      T4=2
-    else
-      grep -q ".*0\.\0\/0" 2>/dev/null /opt/warp-go/warp.conf && T4=1 || T4=0
-      grep -q ".*\:\:\/0" 2>/dev/null /opt/warp-go/warp.conf && T6=1 || T6=0
-    fi
+    allowed_ips_has_v4 && T4=1 || T4=0
+    allowed_ips_has_v6 && T6=1 || T6=0
   else
     case "$TRACE4" in
       off )
@@ -1149,6 +1189,7 @@ non_global_stack_install_or_switch() {
       local ALLOWED_IPS="0.0.0.0/0,::/0"
   esac
 
+  create_non_global_scripts
   sed -i "s/^#//g; s#^AllowedIPs.*#AllowedIPs = ${ALLOWED_IPS}#g" /opt/warp-go/warp.conf
   global_switch
 }
@@ -1182,11 +1223,12 @@ EOF
   fi
 
   if [ "$STATUS" != 0 ]; then
-    if grep -qE "^AllowedIPs.*\.0/0,::/0|^#AllowedIPs" 2>/dev/null /opt/warp-go/warp.conf; then
+    set_warp_interfaces
+    if [ -n "$INTERFACE_4" ] && [ -n "$INTERFACE_6" ]; then
       INTERFACE_4='--interface WARP'; INTERFACE_6='--interface WARP'; local IP_INTERFACE_4='dev WARP'; local IP_INTERFACE_6='dev WARP'; local PING_INTERFACE_4='-I WARP'; local PING_INTERFACE_6='-I WARP'
-    elif grep -q '^AllowedIPs.*\.0/0$' 2>/dev/null /opt/warp-go/warp.conf; then
+    elif [ -n "$INTERFACE_4" ]; then
       INTERFACE_4='--interface WARP'; unset INTERFACE_6; local IP_INTERFACE_4='dev WARP'; unset IP_INTERFACE_6; local PING_INTERFACE_4='-I WARP'; unset PING_INTERFACE_6
-    elif grep -q '^AllowedIPs.*::/0$' 2>/dev/null /opt/warp-go/warp.conf; then
+    elif [ -n "$INTERFACE_6" ]; then
       INTERFACE_6='--interface WARP'; unset INTERFACE_4; unset IP_INTERFACE_4; local IP_INTERFACE_6='dev WARP'; unset PING_INTERFACE_4; local PING_INTERFACE_6='-I WARP'
     fi
   fi
@@ -1200,8 +1242,13 @@ EOF
   [ "$INET6" = 1 ] && $PING6 -c2 -w10 2606:4700:d0::a29f:c001 $PING_INTERFACE_4 >/dev/null 2>&1 && IPV6=1 && STACK=-6
   [ "$INET4" = 1 ] && ping -c2 -W3 162.159.192.1 $PING_INTERFACE_6 >/dev/null 2>&1 && IPV4=1 && STACK=-4
 
-  [ "$IPV4" = 1 ] && ip4_info
-  [ "$IPV6" = 1 ] && ip6_info
+  if [ "$STATUS" != 0 ]; then
+    [ -n "$INTERFACE_4" ] && [ "$IPV4" = 1 ] && ip4_info || unset TRACE4 WAN4 COUNTRY4 ASNORG4
+    [ -n "$INTERFACE_6" ] && [ "$IPV6" = 1 ] && ip6_info || unset TRACE6 WAN6 COUNTRY6 ASNORG6
+  else
+    [ "$IPV4" = 1 ] && ip4_info
+    [ "$IPV6" = 1 ] && ip6_info
+  fi
 }
 
 # 输出 wireguard 和 sing-box 配置文件
@@ -1319,24 +1366,7 @@ install() {
     register_api warp.conf 58
 
     # 生成非全局执行文件并赋权
-    cat > /opt/warp-go/NonGlobalUp.sh << EOF
-sleep 5
-ip -4 rule add oif WARP lookup 60000
-ip -4 rule add table main suppress_prefixlength 0
-ip -4 route add default dev WARP table 60000
-ip -6 rule add oif WARP lookup 60000
-ip -6 rule add table main suppress_prefixlength 0
-ip -6 route add default dev WARP table 60000
-EOF
-
-cat > /opt/warp-go/NonGlobalDown.sh << EOF
-ip -4 rule delete oif WARP lookup 60000
-ip -4 rule delete table main suppress_prefixlength 0
-ip -6 rule delete oif WARP lookup 60000
-ip -6 rule delete table main suppress_prefixlength 0
-EOF
-
-    chmod +x /opt/warp-go/NonGlobalUp.sh /opt/warp-go/NonGlobalDown.sh
+    create_non_global_scripts
 
     info "\n $(text 61) \n"
   }
