@@ -292,6 +292,9 @@ warp-go [option] [lisence]
   | 4 lisence name | 把 WARP+ Lisence 和设备名添加进去，如 ```bash wire-go 4 N5670ljg-sS9jD334-6o6g4M9F Goodluck``` |
   | 6 | 原无论任何状态 -> WARP IPv6 |
   | d | 原无论任何状态 -> WARP 双栈 |
+  | n4 | 原无论任何状态 -> WARP IPv4 非全局 |
+  | n6 | 原无论任何状态 -> WARP IPv6 非全局 |
+  | n / nd | 原无论任何状态 -> WARP 双栈 非全局 |
   | o | warp-go 开关，脚本主动判断当前状态，自动开或关 |
   | u | 卸载 warp-go |
   | v | 同步脚本至最新版本 |

@@ -328,6 +328,9 @@ warp-go [option] [lisence]
   | 4 lisence name | Add WARP+ Lisence and device name, such as ```bash wire-go 4 N5670ljg-sS9jD334-6o6g4M9F Goodluck``` |
   | 6 | Original status -> WARP IPv6 |
   | d | Original status -> WARP dual stack |
+  | n4 | Original status -> WARP IPv4 non-global |
+  | n6 | Original status -> WARP IPv6 non-global |
+  | n / nd | Original status -> WARP dual-stack non-global |
   | o | warp-go switch, the script actively judges the current status, automatically turns on or off |
   | u | Uninstall warp-go |
   | v | Sync script to the latest version |

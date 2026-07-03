@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 # 当前脚本版本号和新增功能
-VERSION='1.3.4'
+VERSION='1.3.5'
 
 # 环境变量用于在Debian或Ubuntu操作系统中设置非交互式（noninteractive）安装模式
 export DEBIAN_FRONTEND=noninteractive
@@ -13,10 +13,10 @@ trap cleanup_resources EXIT INT TERM
 
 E[0]="Language:\n  1.English (default) \n  2.简体中文"
 C[0]="${E[0]}"
-E[1]="Stabilize WARP health monitor automatic reconnect"
-C[1]="优化 WARP 健康检测自动重连稳定性"
-E[2]="warp-go h (help)\n warp-go o (temporary warp-go switch)\n warp-go u (uninstall WARP web interface and warp-go)\n warp-go v (sync script to latest version)\n warp-go i (replace IP with Netflix support)\n warp-go 4/6 ( WARP IPv4/IPv6 single-stack)\n warp-go d (WARP dual-stack)\n warp-go n (WARP IPv4 non-global)\n warp-go g (WARP global/non-global switching)\n warp-go e (output wireguard and sing-box configuration file)\n warp-go s 4/6/d (Set stack proiority: IPv4 / IPv6 / VPS default)\n"
-C[2]="warp-go h (帮助）\n warp-go o (临时 warp-go 开关)\n warp-go u (卸载 WARP 网络接口和 warp-go)\n warp-go v (同步脚本至最新版本)\n warp-go i (更换支持 Netflix 的IP)\n warp-go 4/6 (WARP IPv4/IPv6 单栈)\n warp-go d (WARP 双栈)\n warp-go n (WARP IPv4 非全局)\n warp-go g (WARP 全局 / 非全局相互切换)\n warp-go e (输出 wireguard 和 sing-box 配置文件)\n warp-go s 4/6/d (优先级: IPv4 / IPv6 / VPS default)\n"
+E[1]="Add IPv4/IPv6 single-stack non-global WARP modes"
+C[1]="新增 IPv4/IPv6 单栈非全局 WARP 模式"
+E[2]="warp-go h (help)\n warp-go o (temporary warp-go switch)\n warp-go u (uninstall WARP web interface and warp-go)\n warp-go v (sync script to latest version)\n warp-go i (replace IP with Netflix support)\n warp-go 4/6 ( WARP IPv4/IPv6 single-stack)\n warp-go d (WARP dual-stack)\n warp-go n4/n6 (WARP IPv4/IPv6 single-stack non-global)\n warp-go n/nd (WARP dual-stack non-global)\n warp-go g (WARP global/non-global switching)\n warp-go e (output wireguard and sing-box configuration file)\n warp-go s 4/6/d (Set stack proiority: IPv4 / IPv6 / VPS default)\n"
+C[2]="warp-go h (帮助）\n warp-go o (临时 warp-go 开关)\n warp-go u (卸载 WARP 网络接口和 warp-go)\n warp-go v (同步脚本至最新版本)\n warp-go i (更换支持 Netflix 的IP)\n warp-go 4/6 (WARP IPv4/IPv6 单栈)\n warp-go d (WARP 双栈)\n warp-go n4/n6 (WARP IPv4/IPv6 单栈非全局)\n warp-go n/nd (WARP 双栈非全局)\n warp-go g (WARP 全局 / 非全局相互切换)\n warp-go e (输出 wireguard 和 sing-box 配置文件)\n warp-go s 4/6/d (优先级: IPv4 / IPv6 / VPS default)\n"
 E[3]="This project is designed to add WARP network interface for VPS, using warp-go core, using various interfaces of CloudFlare-WARP, integrated wireguard-go, can completely replace WGCF. Save Hong Kong, Toronto and other VPS, can also get WARP IP. Thanks again @CoiaPrant and his team. Project address: https://gitlab.com/ProjectWARP/warp-go/-/tree/master/"
 C[3]="本项目专为 VPS 添加 WARP 网络接口，使用 wire-go 核心程序，利用CloudFlare-WARP 的各类接口，集成 wireguard-go，可以完全替代 WGCF。 救活了香港、多伦多等 VPS 也可以获取 WARP IP。再次感谢 @CoiaPrant 及其团队。项目地址: https://gitlab.com/ProjectWARP/warp-go/-/tree/master/"
 E[4]="Choose:"
@@ -151,10 +151,10 @@ E[68]="Add WARP dual-stacks global network interface for \${NATIVE[n]}, IPv4 pri
 C[68]="为 \${NATIVE[n]} 添加 WARP 双栈 全局 网络接口，IPv4 优先 (bash warp-go.sh d)"
 E[69]="Add WARP dual-stacks global network interface for \${NATIVE[n]}, IPv6 priority (bash warp-go.sh d)"
 C[69]="为 \${NATIVE[n]} 添加 WARP 双栈 全局 网络接口，IPv6 优先 (bash warp-go.sh d)"
-E[70]="Add WARP dual-stacks non-global network interface for \${NATIVE[n]}, IPv4 priority (bash warp-go.sh n)"
-C[70]="为 \${NATIVE[n]} 添加 WARP 双栈 非全局 网络接口，IPv4 优先 (bash warp-go.sh n)"
-E[71]="Add WARP dual-stacks non-global network interface for \${NATIVE[n]}, IPv6 priority (bash warp-go.sh n)"
-C[71]="为 \${NATIVE[n]} 添加 WARP 双栈 非全局 网络接口，IPv6 优先 (bash warp-go.sh n)"
+E[70]="Add WARP IPv4 non-global network interface for \${NATIVE[n]}, IPv4 priority (bash warp-go.sh n4)"
+C[70]="为 \${NATIVE[n]} 添加 WARP IPv4 非全局 网络接口，IPv4 优先 (bash warp-go.sh n4)"
+E[71]="Add WARP IPv4 non-global network interface for \${NATIVE[n]}, IPv6 priority (bash warp-go.sh n4)"
+C[71]="为 \${NATIVE[n]} 添加 WARP IPv4 非全局 网络接口，IPv6 优先 (bash warp-go.sh n4)"
 E[72]="Turn off warp-go (warp-go o)"
 C[72]="关闭 warp-go (warp-go o)"
 E[73]="Turn on warp-go (warp-go o)"
@@ -179,6 +179,14 @@ E[82]="Sync the latest version (warp-go v)"
 C[82]="同步最新版本 (warp-go v)"
 E[83]="dualstack"
 C[83]="双栈"
+E[84]="Add WARP IPv6 non-global network interface for \${NATIVE[n]}, IPv4 priority (bash warp-go.sh n6)"
+C[84]="为 \${NATIVE[n]} 添加 WARP IPv6 非全局 网络接口，IPv4 优先 (bash warp-go.sh n6)"
+E[85]="Add WARP IPv6 non-global network interface for \${NATIVE[n]}, IPv6 priority (bash warp-go.sh n6)"
+C[85]="为 \${NATIVE[n]} 添加 WARP IPv6 非全局 网络接口，IPv6 优先 (bash warp-go.sh n6)"
+E[86]="Add WARP dual-stacks non-global network interface for \${NATIVE[n]}, IPv4 priority (bash warp-go.sh n or nd)"
+C[86]="为 \${NATIVE[n]} 添加 WARP 双栈 非全局 网络接口，IPv4 优先 (bash warp-go.sh n 或 nd)"
+E[87]="Add WARP dual-stacks non-global network interface for \${NATIVE[n]}, IPv6 priority (bash warp-go.sh n or nd)"
+C[87]="为 \${NATIVE[n]} 添加 WARP 双栈 非全局 网络接口，IPv6 优先 (bash warp-go.sh n 或 nd)"
 
 # 预处理：扫描 E/C 数组，把含 $ 的条目下标记录到关联数组，避免 text() 每次调用都做多余展开
 declare -A TEXT_NEEDS_EVAL
@@ -1011,6 +1019,7 @@ check_stack() {
 
 # 检查全局状态
 check_global() {
+  unset NON_GLOBAL
   [ -s /opt/warp-go/warp.conf ] && grep -q '#AllowedIPs' /opt/warp-go/warp.conf && NON_GLOBAL=1
 }
 
@@ -1107,6 +1116,41 @@ global_switch() {
     ${SYSTEMCTL_START[int]}
     OPTION=o && net
   fi
+}
+
+non_global_stack_install_or_switch() {
+  if [ "$STATUS" = 0 ]; then
+    case "$OPTION" in
+      n4 )
+        CONF=${CONF1[n]}
+        ;;
+      n6 )
+        CONF=${CONF2[n]}
+        ;;
+      n|nd )
+        CONF=${CONF3[n]}
+    esac
+    OPTION=n
+    install
+  fi
+
+  need_install
+  check_global
+  [ "$NON_GLOBAL" = 1 ] && error " WARP non-global mode cannot switch stack directly. Please run [warp-go g] to switch to global mode first, or uninstall and reinstall. "
+
+  case "$OPTION" in
+    n4 )
+      local ALLOWED_IPS="0.0.0.0/0"
+      ;;
+    n6 )
+      local ALLOWED_IPS="::/0"
+      ;;
+    n|nd )
+      local ALLOWED_IPS="0.0.0.0/0,::/0"
+  esac
+
+  sed -i "s/^#//g; s#^AllowedIPs.*#AllowedIPs = ${ALLOWED_IPS}#g" /opt/warp-go/warp.conf
+  global_switch
 }
 
 # 检测系统信息
@@ -1400,14 +1444,24 @@ menu_setting() {
     MENU_OPTION[6]="$(text_eval 69)"
     MENU_OPTION[7]="$(text_eval 70)"
     MENU_OPTION[8]="$(text_eval 71)"
+    MENU_OPTION[9]="$(text_eval 84)"
+    MENU_OPTION[10]="$(text_eval 85)"
+    MENU_OPTION[11]="$(text_eval 86)"
+    MENU_OPTION[12]="$(text_eval 87)"
     ACTION[1]() { CONF=${CONF1[n]}; PRIORITY=1; install; }
     ACTION[2]() { CONF=${CONF1[n]}; PRIORITY=2; install; }
     ACTION[3]() { CONF=${CONF2[n]}; PRIORITY=1; install; }
     ACTION[4]() { CONF=${CONF2[n]}; PRIORITY=2; install; }
     ACTION[5]() { CONF=${CONF3[n]}; PRIORITY=1; install; }
     ACTION[6]() { CONF=${CONF3[n]}; PRIORITY=2; install; }
-    ACTION[7]() { CONF=${CONF3[n]}; PRIORITY=1; OPTION=n; install; }
-    ACTION[8]() { CONF=${CONF3[n]}; PRIORITY=2; OPTION=n; install; }
+    ACTION[7]() { CONF=${CONF1[n]}; PRIORITY=1; OPTION=n; install; }
+    ACTION[8]() { CONF=${CONF1[n]}; PRIORITY=2; OPTION=n; install; }
+    ACTION[9]() { CONF=${CONF2[n]}; PRIORITY=1; OPTION=n; install; }
+    ACTION[10]() { CONF=${CONF2[n]}; PRIORITY=2; OPTION=n; install; }
+    ACTION[11]() { CONF=${CONF3[n]}; PRIORITY=1; OPTION=n; install; }
+    ACTION[12]() { CONF=${CONF3[n]}; PRIORITY=2; OPTION=n; install; }
+    MENU_OPTION[13]="$(text 82)"
+    ACTION[13]() { ver; }
   else
     [ "$NON_GLOBAL" = 1 ] || GLOBAL_AFTER="$(text 24)"
     [ "$STATUS" = 2 ] && ON_OFF="$(text 72)" || ON_OFF="$(text 73)"
@@ -1426,12 +1480,12 @@ menu_setting() {
     ACTION[5]() { change_ip; }
     ACTION[6]() { export_file; }
     ACTION[7]() { uninstall; }
+    MENU_OPTION[8]="$(text 82)"
+    ACTION[8]() { ver; }
   fi
 
   MENU_OPTION[0]="$(text 81)"
-  MENU_OPTION[8]="$(text 82)"
   ACTION[0]() { rm -f /tmp/warp-go*; exit; }
-  ACTION[8]() { ver; }
 
   [ -s /opt/warp-go/warp.conf ] && TYPE=$(grep "Type" /opt/warp-go/warp.conf | cut -d= -f2 | sed "s# ##g")
 }
@@ -1532,7 +1586,10 @@ menu_setting
 
 # 设置部分后缀 3/3
 case "$OPTION" in
-  [46dn] )
+  n4|n6|n|nd )
+    non_global_stack_install_or_switch
+    ;;
+  [46d] )
     if [[ $STATUS != 0 ]]; then
       SWITCHCHOOSE="$(tr 'a-z' 'A-Z' <<< "$OPTION")"
       stack_switch
@@ -1540,7 +1597,7 @@ case "$OPTION" in
       case "$OPTION" in
         4 ) CONF=${CONF1[n]} ;;
         6 ) CONF=${CONF2[n]} ;;
-        d|n ) CONF=${CONF3[n]} ;;
+        d ) CONF=${CONF3[n]} ;;
       esac
       install
     fi
