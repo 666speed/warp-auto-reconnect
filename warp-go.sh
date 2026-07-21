@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 # 当前脚本版本号和新增功能
-VERSION='1.3.6'
+VERSION='1.3.7'
 
 # 环境变量用于在Debian或Ubuntu操作系统中设置非交互式（noninteractive）安装模式
 export DEBIAN_FRONTEND=noninteractive
@@ -13,8 +13,8 @@ trap cleanup_resources EXIT INT TERM
 
 E[0]="Language:\n  1.English (default) \n  2.简体中文"
 C[0]="${E[0]}"
-E[1]="Fix single-stack non-global WARP detection"
-C[1]="修复单栈非全局 WARP 检测"
+E[1]="Improve non-global dual-stack health checks and monitor updates"
+C[1]="改进非全局双栈健康检测和监控热更新"
 E[2]="warp-go h (help)\n warp-go o (temporary warp-go switch)\n warp-go u (uninstall WARP web interface and warp-go)\n warp-go v (sync script to latest version)\n warp-go i (replace IP with Netflix support)\n warp-go 4/6 ( WARP IPv4/IPv6 single-stack)\n warp-go d (WARP dual-stack)\n warp-go n4/n6 (WARP IPv4/IPv6 single-stack non-global)\n warp-go n/nd (WARP dual-stack non-global)\n warp-go g (WARP global/non-global switching)\n warp-go e (output wireguard and sing-box configuration file)\n warp-go s 4/6/d (Set stack proiority: IPv4 / IPv6 / VPS default)\n"
 C[2]="warp-go h (帮助）\n warp-go o (临时 warp-go 开关)\n warp-go u (卸载 WARP 网络接口和 warp-go)\n warp-go v (同步脚本至最新版本)\n warp-go i (更换支持 Netflix 的IP)\n warp-go 4/6 (WARP IPv4/IPv6 单栈)\n warp-go d (WARP 双栈)\n warp-go n4/n6 (WARP IPv4/IPv6 单栈非全局)\n warp-go n/nd (WARP 双栈非全局)\n warp-go g (WARP 全局 / 非全局相互切换)\n warp-go e (输出 wireguard 和 sing-box 配置文件)\n warp-go s 4/6/d (优先级: IPv4 / IPv6 / VPS default)\n"
 E[3]="This project is designed to add WARP network interface for VPS, using warp-go core, using various interfaces of CloudFlare-WARP, integrated wireguard-go, can completely replace WGCF. Save Hong Kong, Toronto and other VPS, can also get WARP IP. Thanks again @CoiaPrant and his team. Project address: https://gitlab.com/ProjectWARP/warp-go/-/tree/master/"
@@ -677,12 +677,27 @@ CONF="/opt/warp-go/warp.conf"
 ENABLE_FILE="/opt/warp-go/monitor.enable"
 PAUSE_FILE="/opt/warp-go/monitor.pause"
 LOG_FILE="/opt/warp-go/monitor.log"
+STATE_DIR="/run/warp-go-monitor"
+MONITOR_VERSION="2.0"
 INTERVAL="${WARP_GO_MONITOR_INTERVAL:-10}"
-TIMEOUT="${WARP_GO_MONITOR_TIMEOUT:-5}"
-FAIL_LIMIT="${WARP_GO_MONITOR_FAIL_LIMIT:-3}"
-BASE_COOLDOWN="${WARP_GO_MONITOR_COOLDOWN:-30}"
+CONNECT_TIMEOUT="${WARP_GO_MONITOR_CONNECT_TIMEOUT:-4}"
+TIMEOUT="${WARP_GO_MONITOR_TIMEOUT:-8}"
+FAIL_LIMIT="${WARP_GO_MONITOR_FAIL_LIMIT:-2}"
+BASE_COOLDOWN="${WARP_GO_MONITOR_COOLDOWN:-45}"
 MAX_COOLDOWN="${WARP_GO_MONITOR_MAX_COOLDOWN:-300}"
-START_GRACE="${WARP_GO_MONITOR_START_GRACE:-30}"
+START_GRACE="${WARP_GO_MONITOR_START_GRACE:-45}"
+PROBE_URLS="${WARP_GO_MONITOR_PROBE_URLS:-https://www.cloudflare.com/cdn-cgi/trace https://speed.cloudflare.com/cdn-cgi/trace}"
+
+mkdir -p "$STATE_DIR" >/dev/null 2>&1
+chmod 700 "$STATE_DIR" >/dev/null 2>&1
+CHECK4_FILE="$STATE_DIR/check4.$$"
+CHECK6_FILE="$STATE_DIR/check6.$$"
+printf '%s\n' "$MONITOR_VERSION" > "$STATE_DIR/version"
+cleanup_monitor() {
+  rm -f "$CHECK4_FILE" "$CHECK6_FILE" "$STATE_DIR/version"
+}
+trap cleanup_monitor EXIT
+trap 'exit 0' INT TERM
 
 log_msg() {
   [ -d /opt/warp-go ] || return 0
@@ -701,19 +716,47 @@ want_ipv6() {
 }
 
 check_family() {
-  local family="$1" ip_opt trace ip output
+  local family="$1" ip_opt trace ip output rc url host error details ip_ok
   [ "$family" = 4 ] && ip_opt="-4" || ip_opt="-6"
-  output=$(curl -ks "$ip_opt" --interface WARP --max-time "$TIMEOUT" http://www.cloudflare.com/cdn-cgi/trace 2>/dev/null)
-  trace=$(awk -F= '/^warp=/{print $2; exit}' <<< "$output")
-  ip=$(awk -F= '/^ip=/{print $2; exit}' <<< "$output")
-  [ -n "$ip" ] && [[ "$trace" =~ ^(on|plus)$ ]]
+
+  for url in $PROBE_URLS; do
+    output=$(curl -ksS "$ip_opt" --noproxy '*' --interface WARP \
+      --connect-timeout "$CONNECT_TIMEOUT" --max-time "$TIMEOUT" "$url" 2>&1)
+    rc=$?
+    trace=$(awk -F= '/^warp=/{print $2; exit}' <<< "$output")
+    ip=$(awk -F= '/^ip=/{print $2; exit}' <<< "$output")
+    ip_ok=0
+    if [ "$family" = 4 ]; then
+      [[ "$ip" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] && ip_ok=1
+    else
+      [[ "$ip" == *:* ]] && ip_ok=1
+    fi
+    if [ "$rc" = 0 ] && [ "$ip_ok" = 1 ] && [[ "$trace" =~ ^(on|plus)$ ]]; then
+      return 0
+    fi
+
+    host="${url#*://}"
+    host="${host%%/*}"
+    if [ "$rc" != 0 ]; then
+      error=$(tr '\r\n' '  ' <<< "$output" | cut -c1-120)
+      details="${details}${details:+ | }${host}:curl=${rc}${error:+(${error})}"
+    else
+      details="${details}${details:+ | }${host}:warp=${trace:-missing},ip=${ip:-missing}"
+    fi
+  done
+
+  printf '%s' "${details:-probe failed}"
+  return 1
 }
 
 restart_warp() {
   local reason="$1"
-  log_msg "health check failed: ${reason}; restarting warp-go"
+  local details="$2"
+  log_msg "health check failed: ${reason}; ${details}; restarting warp-go"
   if command -v systemctl >/dev/null 2>&1 && [ -s /lib/systemd/system/warp-go.service ]; then
-    systemctl restart warp-go >/dev/null 2>&1
+    if ! systemctl restart warp-go >/dev/null 2>&1; then
+      log_msg "warp-go restart command failed: $(systemctl is-active warp-go 2>/dev/null || true)"
+    fi
   else
     kill -15 $(pgrep -x warp-go) >/dev/null 2>&1
     sleep 1
@@ -722,7 +765,10 @@ restart_warp() {
 }
 
 sleep "$START_GRACE"
-fail_count=0
+fail4=0
+fail6=0
+fail_interface=0
+recovery_pending=0
 current_cooldown="$BASE_COOLDOWN"
 while true; do
   if [ ! -e "$ENABLE_FILE" ] || [ -e "$PAUSE_FILE" ] || [ ! -s "$CONF" ]; then
@@ -730,7 +776,7 @@ while true; do
     continue
   fi
 
-  need4=0; need6=0; reason=""
+  need4=0; need6=0; reason=""; details=""
   want_ipv4 && need4=1
   want_ipv6 && need6=1
 
@@ -740,34 +786,73 @@ while true; do
   fi
 
   if ! ip link show WARP >/dev/null 2>&1; then
-    reason="WARP interface missing"
-  elif [ "$need4$need6" = "11" ]; then
-    check_family 4 &
-    pid4=$!
-    check_family 6 &
-    pid6=$!
-    wait "$pid4" || reason="${reason}IPv4 "
-    wait "$pid6" || reason="${reason}IPv6 "
+    fail_interface=$((fail_interface + 1))
+    fail4=0; fail6=0
+    if [ "$fail_interface" -ge "$FAIL_LIMIT" ]; then
+      reason="WARP interface missing"
+      if command -v systemctl >/dev/null 2>&1; then
+        details="service=$(systemctl is-active warp-go 2>/dev/null || true)"
+      else
+        details="process=$(pgrep -x warp-go 2>/dev/null | head -n1)"
+      fi
+    fi
   else
-    [ "$need4" = 1 ] && ! check_family 4 && reason="${reason}IPv4 "
-    [ "$need6" = 1 ] && ! check_family 6 && reason="${reason}IPv6 "
+    fail_interface=0
+    failed4=0; failed6=0
+    : > "$CHECK4_FILE"
+    : > "$CHECK6_FILE"
+
+    if [ "$need4$need6" = "11" ]; then
+      check_family 4 > "$CHECK4_FILE" &
+      pid4=$!
+      check_family 6 > "$CHECK6_FILE" &
+      pid6=$!
+      wait "$pid4" || failed4=1
+      wait "$pid6" || failed6=1
+    else
+      [ "$need4" = 1 ] && ! check_family 4 > "$CHECK4_FILE" && failed4=1
+      [ "$need6" = 1 ] && ! check_family 6 > "$CHECK6_FILE" && failed6=1
+    fi
+
+    if [ "$need4" = 1 ]; then
+      [ "$failed4" = 1 ] && fail4=$((fail4 + 1)) || fail4=0
+    else
+      fail4=0
+    fi
+    if [ "$need6" = 1 ]; then
+      [ "$failed6" = 1 ] && fail6=$((fail6 + 1)) || fail6=0
+    else
+      fail6=0
+    fi
+
+    if [ "$fail4" -ge "$FAIL_LIMIT" ]; then
+      reason="IPv4"
+      details="IPv4[$(cat "$CHECK4_FILE" 2>/dev/null)]"
+    fi
+    if [ "$fail6" -ge "$FAIL_LIMIT" ]; then
+      reason="${reason}${reason:+ }IPv6"
+      details="${details}${details:+; }IPv6[$(cat "$CHECK6_FILE" 2>/dev/null)]"
+    fi
   fi
 
   if [ -n "$reason" ]; then
-    fail_count=$((fail_count + 1))
-    if [ "$fail_count" -ge "$FAIL_LIMIT" ]; then
-      restart_warp "$reason"
-      fail_count=0
-      sleep "$current_cooldown"
-      if [ "$current_cooldown" -lt "$MAX_COOLDOWN" ]; then
-        current_cooldown=$((current_cooldown * 2))
-        [ "$current_cooldown" -gt "$MAX_COOLDOWN" ] && current_cooldown="$MAX_COOLDOWN"
-      fi
-      continue
+    restart_warp "$reason" "${details:-no probe details}"
+    fail4=0; fail6=0; fail_interface=0
+    recovery_pending=1
+    sleep "$current_cooldown"
+    if [ "$current_cooldown" -lt "$MAX_COOLDOWN" ]; then
+      current_cooldown=$((current_cooldown * 2))
+      [ "$current_cooldown" -gt "$MAX_COOLDOWN" ] && current_cooldown="$MAX_COOLDOWN"
     fi
+    continue
   else
-    fail_count=0
-    current_cooldown="$BASE_COOLDOWN"
+    if [ "$fail4" = 0 ] && [ "$fail6" = 0 ] && [ "$fail_interface" = 0 ]; then
+      if [ "$recovery_pending" = 1 ]; then
+        log_msg "health check recovered after warp-go restart"
+        recovery_pending=0
+      fi
+      current_cooldown="$BASE_COOLDOWN"
+    fi
   fi
 
   sleep "$INTERVAL"
@@ -787,11 +872,12 @@ Documentation=https://github.com/fscarmen/warp-sh
 Type=simple
 WorkingDirectory=/opt/warp-go/
 Environment="WARP_GO_MONITOR_INTERVAL=10"
-Environment="WARP_GO_MONITOR_TIMEOUT=5"
-Environment="WARP_GO_MONITOR_FAIL_LIMIT=3"
-Environment="WARP_GO_MONITOR_COOLDOWN=30"
+Environment="WARP_GO_MONITOR_CONNECT_TIMEOUT=4"
+Environment="WARP_GO_MONITOR_TIMEOUT=8"
+Environment="WARP_GO_MONITOR_FAIL_LIMIT=2"
+Environment="WARP_GO_MONITOR_COOLDOWN=45"
 Environment="WARP_GO_MONITOR_MAX_COOLDOWN=300"
-Environment="WARP_GO_MONITOR_START_GRACE=30"
+Environment="WARP_GO_MONITOR_START_GRACE=45"
 ExecStart=/opt/warp-go/warp-go-monitor.sh
 Restart=always
 RestartSec=2s
@@ -803,13 +889,28 @@ EOF
 }
 
 monitor_start() {
+  local monitor_version='2.0'
   [ -x /opt/warp-go/warp-go-monitor.sh ] || return 0
   touch /opt/warp-go/monitor.enable
   rm -f /opt/warp-go/monitor.pause
   if echo "$SYSTEM" | grep -qvE "Alpine|OpenWrt"; then
-    [ -s /lib/systemd/system/warp-go-monitor.service ] && systemctl daemon-reload >/dev/null 2>&1 && systemctl enable --now warp-go-monitor >/dev/null 2>&1
-  elif ! pgrep -f "/opt/warp-go/warp-go-monitor.sh" >/dev/null 2>&1; then
-    nohup /opt/warp-go/warp-go-monitor.sh >/dev/null 2>&1 &
+    if [ -s /lib/systemd/system/warp-go-monitor.service ]; then
+      systemctl daemon-reload >/dev/null 2>&1
+      systemctl enable warp-go-monitor >/dev/null 2>&1
+      if [ "$1" = restart ] || { systemctl is-active --quiet warp-go-monitor && [ "$(cat /run/warp-go-monitor/version 2>/dev/null)" != "$monitor_version" ]; }; then
+        systemctl restart warp-go-monitor >/dev/null 2>&1
+      else
+        systemctl start warp-go-monitor >/dev/null 2>&1
+      fi
+    fi
+  else
+    if [ "$1" = restart ] || { pgrep -f "/opt/warp-go/warp-go-monitor.sh" >/dev/null 2>&1 && [ "$(cat /run/warp-go-monitor/version 2>/dev/null)" != "$monitor_version" ]; }; then
+      kill -15 $(pgrep -f "/opt/warp-go/warp-go-monitor.sh") >/dev/null 2>&1
+      sleep 1
+    fi
+    if ! pgrep -f "/opt/warp-go/warp-go-monitor.sh" >/dev/null 2>&1; then
+      nohup /opt/warp-go/warp-go-monitor.sh >/dev/null 2>&1 &
+    fi
   fi
 }
 
@@ -904,7 +1005,7 @@ ver() {
     [ -s /opt/warp-go/warp.conf ] && create_monitor
     [ -s /opt/warp-go/warp.conf ] && create_non_global_scripts
     [ -s /opt/warp-go/warp.conf ] && grep -q '#AllowedIPs' /opt/warp-go/warp.conf && ${SYSTEMCTL_RESTART[int]} >/dev/null 2>&1
-    [ -e /opt/warp-go/monitor.enable ] && monitor_start
+    [ -e /opt/warp-go/monitor.enable ] && monitor_start restart
     info " $(text 18): $(grep ^VERSION /opt/warp-go/warp-go.sh | sed "s/.*=//g")  $(text 19): $(grep "${L}\[1\]" /opt/warp-go/warp-go.sh | cut -d \" -f2) "
   fi
   exit
