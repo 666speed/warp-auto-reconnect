@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 # 当前脚本版本号和新增功能
-VERSION='1.3.7'
+VERSION='1.3.8'
 
 # 环境变量用于在Debian或Ubuntu操作系统中设置非交互式（noninteractive）安装模式
 export DEBIAN_FRONTEND=noninteractive
@@ -13,8 +13,8 @@ trap cleanup_resources EXIT INT TERM
 
 E[0]="Language:\n  1.English (default) \n  2.简体中文"
 C[0]="${E[0]}"
-E[1]="Improve non-global dual-stack health checks and monitor updates"
-C[1]="改进非全局双栈健康检测和监控热更新"
+E[1]="Add automatic WARP endpoint port failover"
+C[1]="增加 WARP Endpoint 端口自动故障转移"
 E[2]="warp-go h (help)\n warp-go o (temporary warp-go switch)\n warp-go u (uninstall WARP web interface and warp-go)\n warp-go v (sync script to latest version)\n warp-go i (replace IP with Netflix support)\n warp-go 4/6 ( WARP IPv4/IPv6 single-stack)\n warp-go d (WARP dual-stack)\n warp-go n4/n6 (WARP IPv4/IPv6 single-stack non-global)\n warp-go n/nd (WARP dual-stack non-global)\n warp-go g (WARP global/non-global switching)\n warp-go e (output wireguard and sing-box configuration file)\n warp-go s 4/6/d (Set stack proiority: IPv4 / IPv6 / VPS default)\n"
 C[2]="warp-go h (帮助）\n warp-go o (临时 warp-go 开关)\n warp-go u (卸载 WARP 网络接口和 warp-go)\n warp-go v (同步脚本至最新版本)\n warp-go i (更换支持 Netflix 的IP)\n warp-go 4/6 (WARP IPv4/IPv6 单栈)\n warp-go d (WARP 双栈)\n warp-go n4/n6 (WARP IPv4/IPv6 单栈非全局)\n warp-go n/nd (WARP 双栈非全局)\n warp-go g (WARP 全局 / 非全局相互切换)\n warp-go e (输出 wireguard 和 sing-box 配置文件)\n warp-go s 4/6/d (优先级: IPv4 / IPv6 / VPS default)\n"
 E[3]="This project is designed to add WARP network interface for VPS, using warp-go core, using various interfaces of CloudFlare-WARP, integrated wireguard-go, can completely replace WGCF. Save Hong Kong, Toronto and other VPS, can also get WARP IP. Thanks again @CoiaPrant and his team. Project address: https://gitlab.com/ProjectWARP/warp-go/-/tree/master/"
@@ -678,7 +678,7 @@ ENABLE_FILE="/opt/warp-go/monitor.enable"
 PAUSE_FILE="/opt/warp-go/monitor.pause"
 LOG_FILE="/opt/warp-go/monitor.log"
 STATE_DIR="/run/warp-go-monitor"
-MONITOR_VERSION="2.0"
+MONITOR_VERSION="2.1"
 INTERVAL="${WARP_GO_MONITOR_INTERVAL:-10}"
 CONNECT_TIMEOUT="${WARP_GO_MONITOR_CONNECT_TIMEOUT:-4}"
 TIMEOUT="${WARP_GO_MONITOR_TIMEOUT:-8}"
@@ -687,6 +687,9 @@ BASE_COOLDOWN="${WARP_GO_MONITOR_COOLDOWN:-45}"
 MAX_COOLDOWN="${WARP_GO_MONITOR_MAX_COOLDOWN:-300}"
 START_GRACE="${WARP_GO_MONITOR_START_GRACE:-45}"
 PROBE_URLS="${WARP_GO_MONITOR_PROBE_URLS:-https://www.cloudflare.com/cdn-cgi/trace https://speed.cloudflare.com/cdn-cgi/trace}"
+ENDPOINT_FAILOVER="${WARP_GO_MONITOR_ENDPOINT_FAILOVER:-1}"
+ENDPOINT_PORTS="${WARP_GO_MONITOR_ENDPOINT_PORTS:-2408 500 1701 4500}"
+MAX_ENDPOINT_ROTATIONS="${WARP_GO_MONITOR_MAX_ENDPOINT_ROTATIONS:-3}"
 
 mkdir -p "$STATE_DIR" >/dev/null 2>&1
 chmod 700 "$STATE_DIR" >/dev/null 2>&1
@@ -749,6 +752,36 @@ check_family() {
   return 1
 }
 
+current_endpoint() {
+  sed -nE 's/^[[:space:]]*Endpoint[[:space:]]*=[[:space:]]*//p' "$CONF" | head -n1 | tr -d '[:space:]'
+}
+
+rotate_endpoint_port() {
+  local endpoint host port candidate first next found new_endpoint
+  endpoint=$(current_endpoint)
+  [ -n "$endpoint" ] || return 1
+  host="${endpoint%:*}"
+  port="${endpoint##*:}"
+  [ -n "$host" ] && [[ "$port" =~ ^[0-9]+$ ]] || return 1
+
+  found=0
+  for candidate in $ENDPOINT_PORTS; do
+    [ -z "$first" ] && first="$candidate"
+    if [ "$found" = 1 ]; then
+      next="$candidate"
+      break
+    fi
+    [ "$candidate" = "$port" ] && found=1
+  done
+  [ -z "$next" ] && next="$first"
+  [ -n "$next" ] && [ "$next" != "$port" ] || return 1
+
+  new_endpoint="${host}:${next}"
+  sed -i -E "s#^([[:space:]]*Endpoint[[:space:]]*=[[:space:]]*).*#\1${new_endpoint}#" "$CONF" || return 1
+  [ "$(current_endpoint)" = "$new_endpoint" ] || return 1
+  ENDPOINT_CHANGE="${endpoint}->${new_endpoint}"
+}
+
 restart_warp() {
   local reason="$1"
   local details="$2"
@@ -769,6 +802,7 @@ fail4=0
 fail6=0
 fail_interface=0
 recovery_pending=0
+endpoint_rotations=0
 current_cooldown="$BASE_COOLDOWN"
 while true; do
   if [ ! -e "$ENABLE_FILE" ] || [ -e "$PAUSE_FILE" ] || [ ! -s "$CONF" ]; then
@@ -836,11 +870,23 @@ while true; do
   fi
 
   if [ -n "$reason" ]; then
+    endpoint_rotated=0
+    if [ "$recovery_pending" = 1 ] && [ "$ENDPOINT_FAILOVER" = 1 ] && \
+      [ "$endpoint_rotations" -lt "$MAX_ENDPOINT_ROTATIONS" ] && [[ "$details" == *':curl=28'* ]]; then
+      if rotate_endpoint_port; then
+        endpoint_rotations=$((endpoint_rotations + 1))
+        endpoint_rotated=1
+        details="${details}; endpoint[${ENDPOINT_CHANGE}]"
+      fi
+    fi
     restart_warp "$reason" "${details:-no probe details}"
     fail4=0; fail6=0; fail_interface=0
     recovery_pending=1
-    sleep "$current_cooldown"
-    if [ "$current_cooldown" -lt "$MAX_COOLDOWN" ]; then
+    if [ "$endpoint_rotated" = 1 ]; then
+      sleep "$BASE_COOLDOWN"
+      current_cooldown="$BASE_COOLDOWN"
+    else
+      sleep "$current_cooldown"
       current_cooldown=$((current_cooldown * 2))
       [ "$current_cooldown" -gt "$MAX_COOLDOWN" ] && current_cooldown="$MAX_COOLDOWN"
     fi
@@ -848,9 +894,10 @@ while true; do
   else
     if [ "$fail4" = 0 ] && [ "$fail6" = 0 ] && [ "$fail_interface" = 0 ]; then
       if [ "$recovery_pending" = 1 ]; then
-        log_msg "health check recovered after warp-go restart"
+        log_msg "health check recovered after warp-go restart; endpoint=$(current_endpoint)"
         recovery_pending=0
       fi
+      endpoint_rotations=0
       current_cooldown="$BASE_COOLDOWN"
     fi
   fi
@@ -878,6 +925,9 @@ Environment="WARP_GO_MONITOR_FAIL_LIMIT=2"
 Environment="WARP_GO_MONITOR_COOLDOWN=45"
 Environment="WARP_GO_MONITOR_MAX_COOLDOWN=300"
 Environment="WARP_GO_MONITOR_START_GRACE=45"
+Environment="WARP_GO_MONITOR_ENDPOINT_FAILOVER=1"
+Environment="WARP_GO_MONITOR_ENDPOINT_PORTS=2408 500 1701 4500"
+Environment="WARP_GO_MONITOR_MAX_ENDPOINT_ROTATIONS=3"
 ExecStart=/opt/warp-go/warp-go-monitor.sh
 Restart=always
 RestartSec=2s
@@ -889,7 +939,7 @@ EOF
 }
 
 monitor_start() {
-  local monitor_version='2.0'
+  local monitor_version='2.1'
   [ -x /opt/warp-go/warp-go-monitor.sh ] || return 0
   touch /opt/warp-go/monitor.enable
   rm -f /opt/warp-go/monitor.pause
