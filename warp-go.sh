@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 # 当前脚本版本号和新增功能
-VERSION='1.3.8'
+VERSION='1.3.9'
 
 # 环境变量用于在Debian或Ubuntu操作系统中设置非交互式（noninteractive）安装模式
 export DEBIAN_FRONTEND=noninteractive
@@ -13,8 +13,8 @@ trap cleanup_resources EXIT INT TERM
 
 E[0]="Language:\n  1.English (default) \n  2.简体中文"
 C[0]="${E[0]}"
-E[1]="Add automatic WARP endpoint port failover"
-C[1]="增加 WARP Endpoint 端口自动故障转移"
+E[1]="Add multi-provider WARP connectivity checks"
+C[1]="增加多服务商 WARP 联网检测"
 E[2]="warp-go h (help)\n warp-go o (temporary warp-go switch)\n warp-go u (uninstall WARP web interface and warp-go)\n warp-go v (sync script to latest version)\n warp-go i (replace IP with Netflix support)\n warp-go 4/6 ( WARP IPv4/IPv6 single-stack)\n warp-go d (WARP dual-stack)\n warp-go n4/n6 (WARP IPv4/IPv6 single-stack non-global)\n warp-go n/nd (WARP dual-stack non-global)\n warp-go g (WARP global/non-global switching)\n warp-go e (output wireguard and sing-box configuration file)\n warp-go s 4/6/d (Set stack proiority: IPv4 / IPv6 / VPS default)\n"
 C[2]="warp-go h (帮助）\n warp-go o (临时 warp-go 开关)\n warp-go u (卸载 WARP 网络接口和 warp-go)\n warp-go v (同步脚本至最新版本)\n warp-go i (更换支持 Netflix 的IP)\n warp-go 4/6 (WARP IPv4/IPv6 单栈)\n warp-go d (WARP 双栈)\n warp-go n4/n6 (WARP IPv4/IPv6 单栈非全局)\n warp-go n/nd (WARP 双栈非全局)\n warp-go g (WARP 全局 / 非全局相互切换)\n warp-go e (输出 wireguard 和 sing-box 配置文件)\n warp-go s 4/6/d (优先级: IPv4 / IPv6 / VPS default)\n"
 E[3]="This project is designed to add WARP network interface for VPS, using warp-go core, using various interfaces of CloudFlare-WARP, integrated wireguard-go, can completely replace WGCF. Save Hong Kong, Toronto and other VPS, can also get WARP IP. Thanks again @CoiaPrant and his team. Project address: https://gitlab.com/ProjectWARP/warp-go/-/tree/master/"
@@ -678,7 +678,7 @@ ENABLE_FILE="/opt/warp-go/monitor.enable"
 PAUSE_FILE="/opt/warp-go/monitor.pause"
 LOG_FILE="/opt/warp-go/monitor.log"
 STATE_DIR="/run/warp-go-monitor"
-MONITOR_VERSION="2.1"
+MONITOR_VERSION="2.2"
 INTERVAL="${WARP_GO_MONITOR_INTERVAL:-10}"
 CONNECT_TIMEOUT="${WARP_GO_MONITOR_CONNECT_TIMEOUT:-4}"
 TIMEOUT="${WARP_GO_MONITOR_TIMEOUT:-8}"
@@ -686,7 +686,8 @@ FAIL_LIMIT="${WARP_GO_MONITOR_FAIL_LIMIT:-2}"
 BASE_COOLDOWN="${WARP_GO_MONITOR_COOLDOWN:-45}"
 MAX_COOLDOWN="${WARP_GO_MONITOR_MAX_COOLDOWN:-300}"
 START_GRACE="${WARP_GO_MONITOR_START_GRACE:-45}"
-PROBE_URLS="${WARP_GO_MONITOR_PROBE_URLS:-https://www.cloudflare.com/cdn-cgi/trace https://speed.cloudflare.com/cdn-cgi/trace}"
+TRACE_URLS="${WARP_GO_MONITOR_TRACE_URLS:-${WARP_GO_MONITOR_PROBE_URLS:-https://www.cloudflare.com/cdn-cgi/trace}}"
+CONNECTIVITY_URLS="${WARP_GO_MONITOR_CONNECTIVITY_URLS:-https://connectivitycheck.gstatic.com/generate_204 http://www.msftconnecttest.com/connecttest.txt}"
 ENDPOINT_FAILOVER="${WARP_GO_MONITOR_ENDPOINT_FAILOVER:-1}"
 ENDPOINT_PORTS="${WARP_GO_MONITOR_ENDPOINT_PORTS:-2408 500 1701 4500}"
 MAX_ENDPOINT_ROTATIONS="${WARP_GO_MONITOR_MAX_ENDPOINT_ROTATIONS:-3}"
@@ -719,10 +720,11 @@ want_ipv6() {
 }
 
 check_family() {
-  local family="$1" ip_opt trace ip output rc url host error details ip_ok
+  local family="$1" ip_opt trace ip output rc url host error details ip_ok http_code
   [ "$family" = 4 ] && ip_opt="-4" || ip_opt="-6"
 
-  for url in $PROBE_URLS; do
+  # Cloudflare Trace can prove WARP identity, but its failure alone is not enough to restart the tunnel.
+  for url in $TRACE_URLS; do
     output=$(curl -ksS "$ip_opt" --noproxy '*' --interface WARP \
       --connect-timeout "$CONNECT_TIMEOUT" --max-time "$TIMEOUT" "$url" 2>&1)
     rc=$?
@@ -745,6 +747,26 @@ check_family() {
       details="${details}${details:+ | }${host}:curl=${rc}${error:+(${error})}"
     else
       details="${details}${details:+ | }${host}:warp=${trace:-missing},ip=${ip:-missing}"
+    fi
+  done
+
+  # A successful request to another provider proves the WARP-bound data path is still usable.
+  for url in $CONNECTIVITY_URLS; do
+    output=$(curl -ksS "$ip_opt" --noproxy '*' --interface WARP --output /dev/null \
+      --write-out '%{http_code}' --connect-timeout "$CONNECT_TIMEOUT" --max-time "$TIMEOUT" "$url" 2>&1)
+    rc=$?
+    http_code=$(tail -n1 <<< "$output")
+    if [ "$rc" = 0 ] && [[ "$http_code" =~ ^[1-5][0-9]{2}$ ]]; then
+      return 0
+    fi
+
+    host="${url#*://}"
+    host="${host%%/*}"
+    if [ "$rc" != 0 ]; then
+      error=$(tr '\r\n' '  ' <<< "$output" | cut -c1-120)
+      details="${details}${details:+ | }${host}:curl=${rc}${error:+(${error})}"
+    else
+      details="${details}${details:+ | }${host}:http=${http_code:-missing}"
     fi
   done
 
@@ -925,6 +947,8 @@ Environment="WARP_GO_MONITOR_FAIL_LIMIT=2"
 Environment="WARP_GO_MONITOR_COOLDOWN=45"
 Environment="WARP_GO_MONITOR_MAX_COOLDOWN=300"
 Environment="WARP_GO_MONITOR_START_GRACE=45"
+Environment="WARP_GO_MONITOR_TRACE_URLS=https://www.cloudflare.com/cdn-cgi/trace"
+Environment="WARP_GO_MONITOR_CONNECTIVITY_URLS=https://connectivitycheck.gstatic.com/generate_204 http://www.msftconnecttest.com/connecttest.txt"
 Environment="WARP_GO_MONITOR_ENDPOINT_FAILOVER=1"
 Environment="WARP_GO_MONITOR_ENDPOINT_PORTS=2408 500 1701 4500"
 Environment="WARP_GO_MONITOR_MAX_ENDPOINT_ROTATIONS=3"
@@ -939,7 +963,7 @@ EOF
 }
 
 monitor_start() {
-  local monitor_version='2.1'
+  local monitor_version='2.2'
   [ -x /opt/warp-go/warp-go-monitor.sh ] || return 0
   touch /opt/warp-go/monitor.enable
   rm -f /opt/warp-go/monitor.pause
